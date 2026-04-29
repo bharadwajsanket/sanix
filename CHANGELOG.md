@@ -4,6 +4,25 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [v0.4] - 2026-04-29
+
+### Added
+- `echo` command — prints everything after `echo` verbatim; bare `echo` outputs a blank line
+- `strcmp_prefix` helper — checks whether a command word is a leading-space-bounded prefix of
+  the input buffer (enables argument-bearing commands without breaking exact-match dispatch)
+- `cmd_echo` data string in the data section
+
+### Changed
+- Version bumped to `v0.4` in both `boot.asm` and `stage2.asm` headers
+- On-screen banner updated to `sanix v0.4  --  type help`
+
+### Notes
+- `echo` handles leading spaces after the command word (`echo   hi` → `hi`)
+- Does not affect `hi`, `help`, `clear`, or `trim_input` — zero regressions
+- `strcmp_prefix` is safe to reuse for any future argument-bearing commands
+
+---
+
 ## [v0.3] - Interactive Shell Complete
 
 ### Added

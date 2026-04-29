@@ -2,7 +2,7 @@
 ; sanix — Stage 2 (Real Mode Shell)
 ; ------------------------------------------------------------
 ; Author  : Sanket Bharadwaj
-; Version : v0.3
+; Version : v0.4
 ; Mode    : 16-bit Real Mode
 ; Load    : 0x0000:0x7E00
 ; Target  : x86 BIOS (QEMU / bare metal)
@@ -11,7 +11,7 @@
 ;   Minimal interactive shell running in real mode.
 ;   - VGA text output (0xB8000)
 ;   - Keyboard input via BIOS (int 0x16)
-;   - Command handling: hi, help, clear
+;   - Command handling: hi, help, clear, echo
 ;   - Cursor + scrolling support
 ;
 ; Invariants:
@@ -225,6 +225,12 @@ handle_command:
     call strcmp
     jz  .cmd_clear
 
+    ; echo — prefix match: input_buf starts with "echo" ?
+    mov si, input_buf
+    mov di, cmd_echo
+    call strcmp_prefix
+    jz  .cmd_echo
+
     mov si, msg_unknown
     call println
     jmp .done
@@ -241,6 +247,22 @@ handle_command:
 
 .cmd_clear:
     call clear_screen
+    jmp .done
+
+.cmd_echo:
+    ; SI = input_buf, skip past "echo" (4 chars)
+    mov si, input_buf
+    add si, 4                       ; SI now points to char after "echo"
+    ; skip any spaces
+.echo_skip_space:
+    mov al, [si]
+    cmp al, 0x20
+    jne .echo_print
+    inc si
+    jmp .echo_skip_space
+.echo_print:
+    ; SI points to message (or null for bare "echo")
+    call println
     jmp .done
 
 .done:
@@ -303,6 +325,49 @@ strcmp:
     pop si
     mov ax, 1
     test ax, ax                     ; ZF=0
+    ret
+
+; ─────────────────────────────────────────────
+; STRCMP_PREFIX
+; Returns ZF=1 if the null-terminated string at DI is a
+; prefix of the string at SI, AND the next char in SI is
+; either null (exact match) or a space (argument follows).
+; i.e. "echo" matches "echo", "echo hello", "echo  x"
+; Clobbers: nothing (SI, DI, AX saved/restored)
+; ─────────────────────────────────────────────
+strcmp_prefix:
+    push si
+    push di
+    push ax
+.pfx_loop:
+    mov al, [di]
+    test al, al
+    jz  .pfx_check          ; reached end of prefix string
+    mov ah, [si]
+    cmp al, ah
+    jne .pfx_neq
+    inc si
+    inc di
+    jmp .pfx_loop
+.pfx_check:
+    ; DI exhausted — check that SI char is null or space
+    mov al, [si]
+    test al, al
+    jz  .pfx_eq             ; exact command, no args
+    cmp al, 0x20
+    je  .pfx_eq             ; command followed by space + args
+.pfx_neq:
+    pop ax
+    pop di
+    pop si
+    mov ax, 1
+    test ax, ax             ; ZF=0
+    ret
+.pfx_eq:
+    pop ax
+    pop di
+    pop si
+    xor ax, ax              ; ZF=1
     ret
 
 ; ─────────────────────────────────────────────
@@ -426,15 +491,16 @@ cursor_back:
 ; ─────────────────────────────────────────────
 ; DATA
 ; ─────────────────────────────────────────────
-msg_banner  db 'sanix v0.3  --  type help', 0
+msg_banner  db 'sanix v0.4  --  type help', 0
 msg_prompt  db '> ', 0
 msg_hi      db 'HELLO', 0
-msg_help    db 'commands: hi, help, clear', 0
+msg_help    db 'commands: hi, help, clear, echo', 0
 msg_unknown db '?', 0
 
 cmd_hi      db 'hi', 0
 cmd_help    db 'help', 0
 cmd_clear   db 'clear', 0
+cmd_echo    db 'echo', 0
 
 cur_row     dw 0
 cur_col     dw 0

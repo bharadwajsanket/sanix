@@ -40,8 +40,8 @@ chmod +x run.sh
 QEMU opens a window. You see:
 
 ```
-sanix v0.3  --  type help
->
+sanix v0.4  --  type help
+> 
 ```
 
 Type commands. The shell responds.
@@ -53,8 +53,9 @@ Type commands. The shell responds.
 | command | output |
 |---|---|
 | `hi` | `HELLO` |
-| `help` | `commands: hi, help, clear` |
+| `help` | `commands: hi, help, clear, echo` |
 | `clear` | clears the screen |
+| `echo <text>` | prints `<text>`; bare `echo` prints a blank line |
 | anything else | `?` |
 
 Backspace works. Scroll works. Screen wraps cleanly at row 24.
@@ -94,7 +95,9 @@ print_prompt → read_line → handle_command → repeat
 - Backspace decrements the buffer pointer and blanks the VGA cell
 
 **Command dispatch:**
-- `strcmp` compares input buffer against each command string
+- `strcmp` compares input buffer against exact-match commands (`hi`, `help`, `clear`)
+- `strcmp_prefix` handles prefix-style commands like `echo` (matches `echo`, `echo hello`, etc.)
+- `echo` skips past the command word and any trailing spaces, then prints the remainder via `println`
 - Matched command calls `println` with the response string
 - `clear` calls `clear_screen` which `rep stosw`s the entire VGA buffer
 
@@ -194,6 +197,7 @@ keystroke. `strcmp` never matched. Fix: `cld` after every `int 0x16`.
 v0.1  two-stage boot, static VGA text output
 v0.2  interactive shell — keyboard input, command dispatch, backspace
 v0.3  screen scroll, full terminal behaviour, all bugs fixed
+v0.4  echo command, strcmp_prefix helper, version bump
 ```
 
 ---
@@ -202,7 +206,7 @@ v0.3  screen scroll, full terminal behaviour, all bugs fixed
 
 - [ ] command history (up arrow)
 - [ ] custom hardware cursor (INT 10h or direct CRTC port)
-- [ ] more commands — `echo`, `reboot`, `halt`
+- [ ] more commands — `reboot`, `halt`
 - [ ] protected mode switch — GDT setup, 32-bit jump
 - [ ] memory map — INT 15h `E820`
 - [ ] filesystem — read files from floppy sectors
