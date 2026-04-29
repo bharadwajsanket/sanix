@@ -1,0 +1,9 @@
+# build outputs
+*.bin
+os.bin
+
+# macOS
+.DS_Store
+
+# temp
+*.log
