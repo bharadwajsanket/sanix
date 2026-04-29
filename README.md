@@ -1,4 +1,5 @@
-# sanix   
+# <u>sanix</u>
+
 ![x86](https://img.shields.io/badge/arch-x86-blue)
 ![mode](https://img.shields.io/badge/mode-real--mode-green)
 ![lang](https://img.shields.io/badge/lang-assembly-red)
@@ -13,13 +14,13 @@ BIOS → 0x7C00 → Stage 1 (boot.asm) → 0x7E00 → Stage 2 (stage2.asm) → V
 
 ---
 
-## preview
+## Preview
 
 ![sanix terminal](./assets/preview.png)
 
 ---
 
-## what is this
+## What is this
 
 **sanix** is a from-scratch, two-stage x86 bootloader that boots into a working
 interactive terminal shell — entirely in 16-bit real mode. It runs directly on
@@ -29,14 +30,13 @@ Every byte on screen is written by hand into VGA memory at `0xB8000`. Every
 keypress is read directly from the BIOS. There is no kernel, no syscall, no
 standard library of any kind.
 
-This is the kind of project that teaches you what actually happens when a
-machine turns on.
+This is the kind of project that shows what actually happens when a machine boots.
+
+This project is intentionally minimal and transparent — every part of the system is visible and debuggable.
 
 ---
 
----
-
-## why sanix
+## Why sanix
 
 This project exists to understand what actually happens when a machine boots.
 
@@ -50,7 +50,7 @@ The goal is clarity, not convenience.
 
 ---
 
-## quick start
+## Quick start
 
 ```bash
 chmod +x run.sh
@@ -68,7 +68,7 @@ Type commands. The shell responds.
 
 ---
 
-## shell commands
+## Shell commands
 
 | command | output |
 |---|---|
@@ -82,7 +82,7 @@ Backspace works. Scroll works. Screen wraps cleanly at row 24.
 
 ---
 
-## how it works
+## How it works
 
 ### stage 1 — `boot.asm` (exactly 512 bytes)
 
@@ -134,7 +134,7 @@ print_prompt → read_line → handle_command → repeat
 
 ---
 
-## project structure
+## Project structure
 
 ```
 sanix/
@@ -147,7 +147,7 @@ sanix/
 
 ---
 
-## requirements
+## Requirements
 
 | tool | purpose |
 |---|---|
@@ -161,7 +161,7 @@ brew install nasm qemu
 
 ---
 
-## technical notes
+## Technical notes
 
 | detail | value |
 |---|---|
@@ -177,7 +177,7 @@ brew install nasm qemu
 
 ---
 
-## bugs fixed along the way
+## Bugs fixed along the way
 
 These are real bugs that were found and fixed during development — worth
 documenting because each one teaches something fundamental.
@@ -211,13 +211,13 @@ keystroke. `strcmp` never matched. Fix: `cld` after every `int 0x16`.
 
 ---
 
-## status
+## Status
 
 ```
 v0.1  two-stage boot, static VGA text output
 v0.2  interactive shell — keyboard input, command dispatch, backspace
 v0.3  screen scroll, full terminal behaviour, all bugs fixed
-v0.4  echo command, strcmp_prefix helper, version bump
+v0.4  echo command, prefix command parsing
 ```
 
 ---
