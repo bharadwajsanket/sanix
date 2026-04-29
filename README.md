@@ -1,4 +1,8 @@
-# sanix
+# sanix   
+![x86](https://img.shields.io/badge/arch-x86-blue)
+![mode](https://img.shields.io/badge/mode-real--mode-green)
+![lang](https://img.shields.io/badge/lang-assembly-red)
+![status](https://img.shields.io/badge/status-active-success)
 
 > A minimal x86 bootloader and interactive shell written in pure assembly.  
 > No OS. No libc. No abstractions. Just BIOS, RAM, and VGA.
@@ -27,6 +31,22 @@ standard library of any kind.
 
 This is the kind of project that teaches you what actually happens when a
 machine turns on.
+
+---
+
+---
+
+## why sanix
+
+This project exists to understand what actually happens when a machine boots.
+
+Instead of using an existing OS or libraries, everything is done manually:
+- disk reading via BIOS
+- memory management via segments
+- direct VGA writes
+- raw keyboard input
+
+The goal is clarity, not convenience.
 
 ---
 
