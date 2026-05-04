@@ -2,7 +2,7 @@
 ; sanix — Stage 2 (Real Mode Shell)
 ; ------------------------------------------------------------
 ; Author  : Sanket Bharadwaj
-; Version : v0.4
+; Version : v0.5
 ; Mode    : 16-bit Real Mode
 ; Load    : 0x0000:0x7E00
 ; Target  : x86 BIOS (QEMU / bare metal)
@@ -11,7 +11,7 @@
 ;   Minimal interactive shell running in real mode.
 ;   - VGA text output (0xB8000)
 ;   - Keyboard input via BIOS (int 0x16)
-;   - Command handling: hi, help, clear, echo
+;   - Command handling: hi, help, clear, echo, reboot, halt, about
 ;   - Cursor + scrolling support
 ;
 ; Invariants:
@@ -199,38 +199,53 @@ read_line:
 
 ; ─────────────────────────────────────────────
 ; HANDLE COMMAND
-; FIX #1 — SI explicitly reset to input_buf before each strcmp
-; FIX #8 — trim trailing spaces before compare
+; Order: trim → empty check → exact matches → prefix matches → fallback
 ; ─────────────────────────────────────────────
 handle_command:
-    call trim_input                 ; FIX #8 — strip trailing spaces
+    call trim_input                 ; strips leading AND trailing spaces
 
     mov si, input_buf
-    cmp byte [si], 0                ; empty input?
+    cmp byte [si], 0                ; empty input after trim?
     je  .done
 
-    ; FIX #1 — SI reset before every strcmp call
+    ; ── exact matches ──────────────────────────
     mov si, input_buf
     mov di, cmd_hi
     call strcmp
     jz  .cmd_hi
 
-    mov si, input_buf               ; FIX #1 — explicit reset
+    mov si, input_buf
     mov di, cmd_help
     call strcmp
     jz  .cmd_help
 
-    mov si, input_buf               ; FIX #1 — explicit reset
+    mov si, input_buf
     mov di, cmd_clear
     call strcmp
     jz  .cmd_clear
 
-    ; echo — prefix match: input_buf starts with "echo" ?
+    mov si, input_buf
+    mov di, cmd_reboot
+    call strcmp
+    jz  .cmd_reboot
+
+    mov si, input_buf
+    mov di, cmd_halt
+    call strcmp
+    jz  .cmd_halt
+
+    mov si, input_buf
+    mov di, cmd_about
+    call strcmp
+    jz  .cmd_about
+
+    ; ── prefix matches ─────────────────────────
     mov si, input_buf
     mov di, cmd_echo
     call strcmp_prefix
     jz  .cmd_echo
 
+    ; ── fallback ───────────────────────────────
     mov si, msg_unknown
     call println
     jmp .done
@@ -249,11 +264,29 @@ handle_command:
     call clear_screen
     jmp .done
 
+.cmd_reboot:
+    mov ax, 0
+    int 0x19                        ; BIOS warm reboot
+    jmp .done                       ; never reached
+
+.cmd_halt:
+    cli                             ; disable interrupts
+.hang:
+    hlt
+    jmp .hang                       ; loop — CPU is stopped
+
+.cmd_about:
+    mov si, msg_about_name
+    call println
+    mov si, msg_about_author
+    call println
+    mov si, msg_about_mode
+    call println
+    jmp .done
+
 .cmd_echo:
-    ; SI = input_buf, skip past "echo" (4 chars)
     mov si, input_buf
-    add si, 4                       ; SI now points to char after "echo"
-    ; skip any spaces
+    add si, 4                       ; skip past "echo"
 .echo_skip_space:
     mov al, [si]
     cmp al, 0x20
@@ -261,39 +294,68 @@ handle_command:
     inc si
     jmp .echo_skip_space
 .echo_print:
-    ; SI points to message (or null for bare "echo")
-    call println
+    call println                    ; SI = message or null (blank line)
     jmp .done
 
 .done:
     ret
 
 ; ─────────────────────────────────────────────
-; TRIM_INPUT — FIX #8
-; removes trailing spaces from input_buf
-; so "hi " matches "hi"
+; TRIM_INPUT
+; 1) Trims leading spaces  — shifts content left in buffer
+; 2) Trims trailing spaces — writes null over them
+; Invariants: DS=0x0000, no ES/DF touch, stack balanced
 ; ─────────────────────────────────────────────
 trim_input:
     push si
+    push di
     push ax
+
+    ; ── Phase 1: trim leading spaces ───────────
+    mov si, input_buf               ; SI = read pointer
+.skip_leading:
+    mov al, [si]
+    test al, al
+    jz  .leading_done               ; empty string — nothing to do
+    cmp al, 0x20
+    jne .leading_done               ; found first non-space
+    inc si
+    jmp .skip_leading
+.leading_done:
+    ; shift [si..] left to input_buf
+    mov di, input_buf
+    cmp si, di
+    je  .trim_trailing              ; no leading spaces — skip copy
+.shift_loop:
+    mov al, [si]
+    mov [di], al
+    inc si
+    inc di
+    test al, al
+    jnz .shift_loop                 ; stop after copying the null
+
+    ; ── Phase 2: trim trailing spaces ──────────
+.trim_trailing:
     mov si, input_buf
 .find_end:
     mov al, [si]
     test al, al
-    jz  .trim                       ; at null — start trimming backwards
+    jz  .trim_back
     inc si
     jmp .find_end
-.trim:
-    cmp si, input_buf               ; at start? nothing to trim
+.trim_back:
+    cmp si, input_buf
     je  .done
     dec si
     mov al, [si]
-    cmp al, 0x20                    ; space?
+    cmp al, 0x20
     jne .done
-    mov byte [si], 0                ; replace with null
-    jmp .trim
+    mov byte [si], 0
+    jmp .trim_back
+
 .done:
     pop ax
+    pop di
     pop si
     ret
 
@@ -491,15 +553,22 @@ cursor_back:
 ; ─────────────────────────────────────────────
 ; DATA
 ; ─────────────────────────────────────────────
-msg_banner  db 'sanix v0.4  --  type help', 0
-msg_prompt  db '> ', 0
-msg_hi      db 'HELLO', 0
-msg_help    db 'commands: hi, help, clear, echo', 0
-msg_unknown db '?', 0
+msg_banner      db 'sanix v0.5  --  type help', 0
+msg_prompt      db '> ', 0
+msg_hi          db 'HELLO', 0
+msg_help        db 'commands: hi, help, clear, echo, reboot, halt, about', 0
+msg_unknown     db '?', 0
+
+msg_about_name   db 'sanix v0.5', 0
+msg_about_author db 'author: Sanket Bharadwaj', 0
+msg_about_mode   db 'mode: real mode', 0
 
 cmd_hi      db 'hi', 0
 cmd_help    db 'help', 0
 cmd_clear   db 'clear', 0
+cmd_reboot  db 'reboot', 0
+cmd_halt    db 'halt', 0
+cmd_about   db 'about', 0
 cmd_echo    db 'echo', 0
 
 cur_row     dw 0

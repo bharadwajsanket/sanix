@@ -4,6 +4,32 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [v0.5] - 2026-05-04
+
+### Added
+- **Leading-space trim** — `trim_input` now shifts buffer content left to remove
+  leading spaces before any command matching (`   hi` → `hi`)
+- `reboot` command — triggers a BIOS warm reboot via `INT 0x19`
+- `halt` command — disables interrupts (`cli`) and loops on `hlt`; CPU stops cleanly
+- `about` command — prints three lines: `sanix v0.5`, `author: Sanket Bharadwaj`, `mode: real mode`
+- New command strings in data section: `cmd_reboot`, `cmd_halt`, `cmd_about`
+- New message strings: `msg_about_name`, `msg_about_author`, `msg_about_mode`
+
+### Changed
+- `trim_input` rewritten — Phase 1 strips leading spaces (in-buffer shift), Phase 2 strips trailing spaces
+- `handle_command` dispatch order formalised: exact → prefix → fallback
+- `msg_help` updated to list all seven commands
+- Banner bumped to `sanix v0.5  --  type help`
+- Version header in `stage2.asm` and `boot.asm` bumped to `v0.5`
+
+### Notes
+- `reboot` and `halt` are both exact-match commands (no args) — handled by `strcmp`
+- `trim_input` uses only `DS:offset` reads/writes — ES and DF untouched
+- `halt` is intentionally non-returning; the `jmp .done` after `hlt` is unreachable dead code for NASM
+- All existing commands (`hi`, `help`, `clear`, `echo`) unchanged and verified working
+
+---
+
 ## [v0.4] - 2026-04-29
 
 ### Added
