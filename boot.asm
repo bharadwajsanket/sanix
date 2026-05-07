@@ -2,7 +2,7 @@
 ; sanix — Stage 1 Bootloader (MBR)
 ; ------------------------------------------------------------
 ; Author  : Sanket Bharadwaj
-; Version : v0.4
+; Version : v0.6
 ; Mode    : 16-bit Real Mode
 ; Load    : 0x0000:0x7C00 (BIOS)
 ; Target  : x86 BIOS (QEMU / bare metal)
@@ -15,7 +15,7 @@
 ;   - Jumps to Stage 2 (shell)
 ;
 ; Notes:
-;   - Stage 2 currently at v0.4 (shell with echo support)
+;   - Stage 2 currently at v0.6 (history, autocomplete, hardware cursor)
 ;
 ; Constraints:
 ;   - Exactly 512 bytes
@@ -47,7 +47,7 @@ start:
 
     ; NOW set up int 0x13 params (AX must be set last)
     mov ah, 0x02    ; function: read sectors
-    mov al, 2       ; number of sectors
+    mov al, 4       ; number of sectors (stage2.bin is ~1942 bytes = 4 sectors)
     mov ch, 0       ; cylinder 0
     mov cl, 2       ; sector 2 (1-indexed)
     mov dh, 0       ; head 0

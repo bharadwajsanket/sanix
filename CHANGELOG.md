@@ -4,6 +4,26 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [v0.6] - 2026-05-07
+
+### Added
+- **Command History** — Navigate previous commands using UP/DOWN arrow keys (maintains up to 8 commands, ignores empty strings).
+- **Hardware Cursor Sync** — Visible blinking hardware cursor stays synchronized with input line and scrolling using BIOS INT 10h.
+- **TAB Autocomplete** — Basic unique-match prefix autocomplete for all known commands.
+- `cls` alias — exact alias for the `clear` command.
+- `version` command — prints the current shell version.
+
+### Changed
+- Command dispatch refactored to use data tables (`exact_cmd_table` and `prefix_cmd_table`), drastically simplifying `handle_command` layout and removing duplicated comparison blocks.
+- Arrow keys correctly mapped from BIOS extended scancodes (`AH=0x48` for UP, `AH=0x50` for DOWN).
+- Version strings and prompts bumped to `v0.6`.
+
+### Notes
+- Extensively preserved the 16-bit real-mode architecture without adding overhead.
+- All hardware constraints intact: `DS=0x0000`, `DF=0`.
+
+---
+
 ## [v0.5] - 2026-05-04
 
 ### Added

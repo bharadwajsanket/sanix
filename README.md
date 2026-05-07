@@ -40,7 +40,7 @@ chmod +x run.sh
 QEMU opens a window. You see:
 
 ```
-sanix v0.5  --  type help
+sanix v0.6  --  type help
 > 
 ```
 
@@ -55,11 +55,17 @@ Type commands. The shell responds.
 | `hi` | `HELLO` |
 | `help` | lists all commands |
 | `clear` | clears the screen |
+| `cls` | exact alias for clear |
+| `version` | prints sanix v0.6 |
 | `echo <text>` | prints `<text>`; bare `echo` prints a blank line |
 | `about` | name, author, mode |
 | `reboot` | warm reboot via BIOS INT 19h |
 | `halt` | disables interrupts and halts the CPU |
 | anything else | `?` |
+
+**Special Keys:**
+- `UP / DOWN Arrow`: Browse command history (ignores empty commands).
+- `TAB`: Autocomplete command prefix if unique.
 
 Leading and trailing spaces are stripped before matching — `  hi  ` works.
 
@@ -73,7 +79,7 @@ The BIOS loads the first sector of the floppy into physical address `0x7C00`
 and jumps to it. Stage 1 has one job: load Stage 2 and hand off execution.
 
 - Initialises `DS`, `ES`, `SS`, `SP`
-- Calls INT 13h (CHS read) to load 2 sectors from floppy sector 2 into `0x0000:0x7E00`
+- Calls INT 13h (CHS read) to load **4 sectors** from floppy sector 2 into `0x0000:0x7E00`
 - Far jumps to `0x0000:0x7E00`
 - Ends with the boot signature `0xAA55` at bytes 510–511
 
@@ -98,7 +104,8 @@ print_prompt → read_line → handle_command → repeat
 - Backspace decrements the buffer pointer and blanks the VGA cell
 
 **Command dispatch:**
-- `strcmp` handles exact-match commands: `hi`, `help`, `clear`, `reboot`, `halt`, `about`
+- Parser refactored to use data tables (`exact_cmd_table`, `prefix_cmd_table`) for clean, loop-based dispatch
+- `strcmp` handles exact-match commands: `hi`, `help`, `clear`, `cls`, `reboot`, `halt`, `about`, `version`
 - `strcmp_prefix` handles argument-bearing commands: `echo`
 - Leading and trailing spaces stripped from input before any comparison
 - Dispatch order: exact matches → prefix matches → fallback `?`
@@ -108,6 +115,7 @@ print_prompt → read_line → handle_command → repeat
 - Cell offset = `(cur_row * 80 + cur_col) * 2`
 - Written directly to `ES:BX` where `ES = 0xB800`
 - `cur_row` and `cur_col` tracked as 16-bit words in data section
+- Hardware cursor is actively synchronized via BIOS INT 10h (AH=0x02) on every update
 
 **Scrolling:**
 - On newline, if `cur_row >= 25`: scroll triggers
@@ -149,7 +157,7 @@ brew install nasm qemu
 |---|---|
 | Boot signature | `0xAA55` at bytes 510–511 of sector 0 |
 | Stage 2 load address | `0x0000:0x7E00` via INT 13h CHS (cyl 0, head 0, sector 2) |
-| Sectors loaded | 2 (covers full 617-byte stage2.bin) |
+| Sectors loaded | **4** (covers ~1943-byte v0.6 stage2.bin with history + tables) |
 | VGA buffer base | `0xB8000` (text mode, 80×25) |
 | VGA cell format | `[char byte][attr byte]` — `0x07` = white on black, `0x0a` = green |
 | Execution mode | 16-bit real mode throughout |
@@ -191,6 +199,29 @@ INT 16h (and other BIOS interrupts) do not guarantee DF=0 on return. `stosb`
 in `read_line` was writing backwards through the input buffer, corrupting every
 keystroke. `strcmp` never matched. Fix: `cld` after every `int 0x16`.
 
+**DF leak from INT 10h (v0.6)**
+`sync_cursor` calls INT 10h to move the hardware cursor. BIOS does not guarantee
+DF=0 on return. All string ops (lodsb, stosb, movsb) ran backwards after the
+first cursor sync, making the shell appear blank/frozen. Fix: `cld` inside
+`sync_cursor` after `int 0x10`.
+
+**ES corruption by INT 10h (v0.6)**
+`sync_cursor` did not save/restore ES. INT 10h corrupted ES, which broke
+`stosb` in `read_line` (characters stored at wrong address) and `vga_putchar_attr`
+(VGA writes landed at wrong segment). Fix: `push es` / `pop es` inside `sync_cursor`.
+
+**BX corruption in table-driven dispatch (v0.6)**
+`strcmp` used BL as a scratch byte without saving BX. The new table-driven parser
+uses BX as the table walk pointer. A non-matching `strcmp` left BL dirty, so
+`add bx, 4` advanced a corrupted address — the dispatch loop wandered into random
+memory and hung. Fix: `push bx` / `pop bx` inside `strcmp`.
+
+**Stage 2 partially unloaded (v0.6)**
+v0.6 grew stage2.bin from ~945 bytes to ~1943 bytes, but boot.asm still loaded
+only 2 sectors (1024 bytes). All string data, command tables, history buffer,
+and cursor variables were beyond the loaded range — the shell read raw zeros.
+Fix: `mov al, 4` in boot.asm.
+
 ---
 
 ## status
@@ -201,14 +232,15 @@ v0.2  interactive shell — keyboard input, command dispatch, backspace
 v0.3  screen scroll, full terminal behaviour, all bugs fixed
 v0.4  echo command, strcmp_prefix helper, version bump
 v0.5  leading/trailing trim, reboot, halt, about commands
+v0.6  history, autocomplete, hardware cursor, cls, version, parser tables
 ```
 
 ---
 
 ## roadmap
 
-- [ ] command history (up arrow)
-- [ ] custom hardware cursor (INT 10h or direct CRTC port)
+- [x] command history (up arrow)
+- [x] custom hardware cursor (INT 10h or direct CRTC port)
 - [ ] protected mode switch — GDT setup, 32-bit jump
 - [ ] memory map — INT 15h `E820`
 - [ ] filesystem — read files from floppy sectors

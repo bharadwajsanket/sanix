@@ -2,7 +2,7 @@
 ; sanix — Stage 2 (Real Mode Shell)
 ; ------------------------------------------------------------
 ; Author  : Sanket Bharadwaj
-; Version : v0.5
+; Version : v0.6
 ; Mode    : 16-bit Real Mode
 ; Load    : 0x0000:0x7E00
 ; Target  : x86 BIOS (QEMU / bare metal)
@@ -57,6 +57,7 @@ start:
     call println
 
 main_loop:
+    mov word [hist_nav_idx], -1
     call print_prompt
     call read_line
     call handle_command
@@ -83,6 +84,7 @@ clear_screen:
     pop es                          ; ES restored to 0x0000
     mov word [cur_row], 0
     mov word [cur_col], 0
+    call sync_cursor
     ret
 
 ; ─────────────────────────────────────────────
@@ -140,6 +142,7 @@ newline:
     mov word [cur_col], 0
     inc word [cur_row]
     call check_scroll               ; FIX #3/#6 — unified path
+    call sync_cursor
     ret
 
 ; ─────────────────────────────────────────────
@@ -157,9 +160,10 @@ print_prompt:
 read_line:
     push es
     xor ax, ax
-    mov es, ax                      ; FIX #5 — ES=0x0000 explicit, not implicit
+    mov es, ax                      ; ES=0x0000 for stosb
     mov di, input_buf
     xor bx, bx
+    ; note: cursor already positioned by print_prompt — no sync needed here
 
 .key_loop:
     xor ah, ah
@@ -170,8 +174,18 @@ read_line:
     je  .enter
     cmp al, 8                       ; Backspace
     je  .backspace
-    cmp al, 0                       ; FIX — ignore extended keys (al=0 means scancode only)
-    je  .key_loop
+    cmp al, 9                       ; TAB
+    je  .handle_tab
+    cmp al, 0                       ; Extended key
+    jne .not_ext
+
+    cmp ah, 0x48                    ; UP
+    je  .handle_up
+    cmp ah, 0x50                    ; DOWN
+    je  .handle_down
+    jmp .key_loop
+
+.not_ext:
     cmp al, 0x20                    ; FIX #7 — ignore non-printable chars below space
     jl  .key_loop
     cmp bx, BUF_MAX - 1             ; buffer full?
@@ -191,6 +205,93 @@ read_line:
     call cursor_back
     jmp .key_loop
 
+.handle_up:
+    mov cx, [hist_count]
+    test cx, cx
+    jz  .key_loop
+    mov ax, [hist_nav_idx]
+    inc ax
+    cmp ax, cx
+    jge .key_loop
+    mov [hist_nav_idx], ax
+    call load_history
+    mov di, input_buf
+    add di, bx
+    jmp .key_loop
+
+.handle_down:
+    mov ax, [hist_nav_idx]
+    cmp ax, -1
+    je  .key_loop
+    dec ax
+    mov [hist_nav_idx], ax
+    cmp ax, -1
+    je  .clear_for_down
+    call load_history
+    mov di, input_buf
+    add di, bx
+    jmp .key_loop
+
+.clear_for_down:
+    call clear_input_line
+    mov di, input_buf
+    mov byte [di], 0
+    xor bx, bx
+    jmp .key_loop
+
+.handle_tab:
+    test bx, bx                     ; nothing typed — do nothing
+    jz  .key_loop
+
+    ; ── scan tab_complete_table for unique prefix match ──
+    push bx                         ; save current char count
+    push si                         ; save SI (clobbered by scan)
+    xor cx, cx                      ; cx = match count
+    xor dx, dx                      ; dx = matched string address
+    mov si, tab_complete_table      ; SI walks the pointer list
+
+.tab_scan:
+    mov di, [si]                    ; DI = next candidate string address
+    test di, di                     ; zero terminator?
+    jz  .tab_done
+    push si                         ; save table position
+    mov si, input_buf               ; compare input against candidate
+    call is_prefix                  ; ZF=1 if input is prefix of candidate
+    pop si
+    jnz .tab_next                   ; no match — advance
+    inc cx                          ; match found
+    mov dx, di                      ; save matched string address
+.tab_next:
+    add si, 2                       ; each table entry is one word (dw)
+    jmp .tab_scan
+
+.tab_done:
+    pop si                          ; restore SI
+    pop bx                          ; restore char count
+    cmp cx, 1                       ; unique match?
+    jne .key_loop                   ; 0 or >1 matches — do nothing
+
+    ; ── unique match: clear current input and insert completed command ──
+    call clear_input_line           ; erase typed chars (uses bx as count)
+    mov si, dx                      ; SI = matched command string
+    mov di, input_buf
+.tab_copy:
+    mov al, [si]
+    mov [di], al
+    test al, al
+    jz  .tab_copy_done
+    inc si
+    inc di
+    jmp .tab_copy
+.tab_copy_done:
+    mov bx, di
+    sub bx, input_buf               ; bx = new char count
+    mov si, input_buf
+    call print_str                  ; render completed command
+    mov di, input_buf
+    add di, bx                      ; di = end of input_buf
+    jmp .key_loop
+
 .enter:
     mov byte [di], 0                ; null-terminate
     pop es                          ; restore ES=0x0000
@@ -208,44 +309,40 @@ handle_command:
     cmp byte [si], 0                ; empty input after trim?
     je  .done
 
-    ; ── exact matches ──────────────────────────
-    mov si, input_buf
-    mov di, cmd_hi
-    call strcmp
-    jz  .cmd_hi
+    call push_history
 
+    mov bx, exact_cmd_table
+.check_exact:
+    mov di, [bx]
+    test di, di
+    jz  .check_prefix
     mov si, input_buf
-    mov di, cmd_help
     call strcmp
-    jz  .cmd_help
+    jz  .exact_match
+    add bx, 4
+    jmp .check_exact
 
-    mov si, input_buf
-    mov di, cmd_clear
-    call strcmp
-    jz  .cmd_clear
+.exact_match:
+    mov ax, [bx+2]
+    jmp ax
 
+.check_prefix:
+    mov bx, prefix_cmd_table
+.check_prefix_loop:
+    mov di, [bx]
+    test di, di
+    jz  .fallback
     mov si, input_buf
-    mov di, cmd_reboot
-    call strcmp
-    jz  .cmd_reboot
-
-    mov si, input_buf
-    mov di, cmd_halt
-    call strcmp
-    jz  .cmd_halt
-
-    mov si, input_buf
-    mov di, cmd_about
-    call strcmp
-    jz  .cmd_about
-
-    ; ── prefix matches ─────────────────────────
-    mov si, input_buf
-    mov di, cmd_echo
     call strcmp_prefix
-    jz  .cmd_echo
+    jz  .prefix_match
+    add bx, 4
+    jmp .check_prefix_loop
 
-    ; ── fallback ───────────────────────────────
+.prefix_match:
+    mov ax, [bx+2]
+    jmp ax
+
+.fallback:
     mov si, msg_unknown
     call println
     jmp .done
@@ -281,6 +378,11 @@ handle_command:
     mov si, msg_about_author
     call println
     mov si, msg_about_mode
+    call println
+    jmp .done
+
+.cmd_version:
+    mov si, msg_version
     call println
     jmp .done
 
@@ -360,13 +462,13 @@ trim_input:
     ret
 
 ; ─────────────────────────────────────────────
-; STRCMP — FIX #1 — fully restores SI and DI
-; caller must reset SI before each call
-; ZF=1 if strings equal
+; STRCMP — ZF=1 if strings equal, ZF=0 otherwise
+; Saves/restores SI, DI, BX. Clobbers AX only.
 ; ─────────────────────────────────────────────
 strcmp:
     push si
     push di
+    push bx                         ; BUG FIX: BL used as scratch; BX is table pointer in handle_command
 .loop:
     mov al, [si]
     mov bl, [di]
@@ -378,11 +480,13 @@ strcmp:
     inc di
     jmp .loop
 .eq:
+    pop bx
     pop di
     pop si
     xor ax, ax                      ; ZF=1
     ret
 .neq:
+    pop bx
     pop di
     pop si
     mov ax, 1
@@ -522,6 +626,7 @@ vga_putchar_attr:
     inc word [cur_row]
     call check_scroll               ; FIX #6 — unified scroll trigger
 .done:
+    call sync_cursor
     pop dx
     pop bx
     ret
@@ -544,6 +649,7 @@ cursor_back:
     add bx, [cur_col]
     shl bx, 1
     mov word [es:bx], 0x0720
+    call sync_cursor
 .done:
     pop bx
     pop ax
@@ -551,25 +657,220 @@ cursor_back:
     ret
 
 ; ─────────────────────────────────────────────
+; SYNC_CURSOR — moves hardware cursor to cur_row/cur_col
+; Uses BIOS INT 10h AH=02h.
+; Saves/restores: AX, BX, DX, ES. Restores DF=0.
+; ─────────────────────────────────────────────
+sync_cursor:
+    push ax
+    push bx
+    push dx
+    push es                         ; BUG FIX: INT 10h may corrupt ES
+    mov ah, 0x02
+    mov bh, 0
+    mov dh, byte [cur_row]
+    mov dl, byte [cur_col]
+    int 0x10
+    cld                             ; BIOS may trash DF — restore invariant
+    pop es                          ; restore ES exactly as caller left it
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+clear_input_line:
+    push ax
+    push cx
+    mov cx, bx
+    test cx, cx
+    jz  .done
+.loop:
+    call cursor_back
+    dec cx
+    jnz .loop
+.done:
+    pop cx
+    pop ax
+    ret
+
+; ─────────────────────────────────────────────
+; LOAD_HISTORY
+; Clears current input line, copies history[hist_nav_idx]
+; into input_buf, prints it, and updates BX = new length.
+; Clobbers: AX, BX, CX, DX, SI, DI (intentional — callers reload these)
+; ─────────────────────────────────────────────
+load_history:
+    push dx                         ; save DX — mul will clobber it
+    call clear_input_line
+    mov ax, [hist_nav_idx]
+    mov cx, BUF_MAX
+    mul cx                          ; AX = hist_nav_idx * BUF_MAX  (DX=0 always, fits 16-bit)
+    pop dx                          ; restore DX before any further ops
+    
+    mov si, history_buf
+    add si, ax
+    mov di, input_buf
+.copy_loop:
+    mov al, [si]
+    mov [di], al
+    test al, al
+    jz  .copy_done
+    inc si
+    inc di
+    jmp .copy_loop
+.copy_done:
+    mov bx, di
+    sub bx, input_buf               ; BX = length of loaded string (intentionally returned)
+    mov si, input_buf
+    call print_str
+    ret
+
+; ─────────────────────────────────────────────
+; PUSH_HISTORY
+; Prepends current input_buf to history ring (max 8).
+; Skips empty input and exact duplicate of most-recent.
+; Saves: AX, BX, CX, SI, DI (via push/pop).
+; DS and ES are explicitly managed and restored.
+; DF is always restored to 0 before return.
+; ─────────────────────────────────────────────
+push_history:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+
+    cmp byte [input_buf], 0         ; empty command — skip
+    je  .done
+
+    mov si, input_buf
+    mov di, history_buf
+    call strcmp                     ; duplicate of most-recent — skip
+    jz  .done
+
+    ; ── Phase 1: shift history ring backward by one slot ──
+    ; We copy from slot 0..6 → slot 1..7 (backwards to avoid overlap)
+    ; Using std+rep movsb: SI points to last byte of slot 6, DI to last of slot 7
+    push ds
+    push es
+    mov ax, ds                      ; DS = 0x0000
+    mov es, ax                      ; ES = 0x0000 (same segment for movsb)
+    mov si, history_buf + BUF_MAX * 7 - 1   ; last byte of slot 6
+    mov di, history_buf + BUF_MAX * 8 - 1   ; last byte of slot 7
+    mov cx, BUF_MAX * 7
+    std                             ; direction: descending
+    rep movsb
+    cld                             ; DF=0 restored — critical invariant
+    pop es
+    pop ds
+
+    ; ── Phase 2: copy input_buf into slot 0 ──
+    ; DS=0x0000, ES=0x0000 now — forward copy is safe
+    push es
+    xor ax, ax
+    mov es, ax                      ; ensure ES=0x0000 explicitly
+    mov si, input_buf
+    mov di, history_buf
+    mov cx, BUF_MAX
+    rep movsb                       ; DF=0, forward copy
+    pop es
+
+    cmp word [hist_count], 8
+    je  .done
+    inc word [hist_count]
+.done:
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+is_prefix:
+    push si
+    push di
+.loop:
+    mov al, [si]
+    test al, al
+    jz  .match
+    mov ah, [di]
+    test ah, ah
+    jz  .no_match
+    cmp al, ah
+    jne .no_match
+    inc si
+    inc di
+    jmp .loop
+.match:
+    pop di
+    pop si
+    xor ax, ax
+    ret
+.no_match:
+    pop di
+    pop si
+    mov ax, 1
+    test ax, ax
+    ret
+
+; ─────────────────────────────────────────────
 ; DATA
 ; ─────────────────────────────────────────────
-msg_banner      db 'sanix v0.5  --  type help', 0
+msg_banner      db 'sanix v0.6  --  type help', 0
 msg_prompt      db '> ', 0
 msg_hi          db 'HELLO', 0
-msg_help        db 'commands: hi, help, clear, echo, reboot, halt, about', 0
+msg_help        db 'commands: hi, help, clear, cls, echo, reboot, halt, about, version', 0
 msg_unknown     db '?', 0
 
-msg_about_name   db 'sanix v0.5', 0
+msg_about_name   db 'sanix v0.6', 0
 msg_about_author db 'author: Sanket Bharadwaj', 0
 msg_about_mode   db 'mode: real mode', 0
 
 cmd_hi      db 'hi', 0
 cmd_help    db 'help', 0
 cmd_clear   db 'clear', 0
+cmd_cls     db 'cls', 0
 cmd_reboot  db 'reboot', 0
 cmd_halt    db 'halt', 0
 cmd_about   db 'about', 0
+cmd_version db 'version', 0
 cmd_echo    db 'echo', 0
+
+msg_version db 'sanix v0.6', 0
+
+exact_cmd_table:
+    dw cmd_hi, handle_command.cmd_hi
+    dw cmd_help, handle_command.cmd_help
+    dw cmd_clear, handle_command.cmd_clear
+    dw cmd_cls, handle_command.cmd_clear
+    dw cmd_reboot, handle_command.cmd_reboot
+    dw cmd_halt, handle_command.cmd_halt
+    dw cmd_about, handle_command.cmd_about
+    dw cmd_version, handle_command.cmd_version
+    dw 0
+
+; flat pointer list — each entry is dw ptr, terminated by dw 0
+; used ONLY for TAB autocomplete (no handler addresses, no stride issues)
+tab_complete_table:
+    dw cmd_hi
+    dw cmd_help
+    dw cmd_clear
+    dw cmd_cls
+    dw cmd_reboot
+    dw cmd_halt
+    dw cmd_about
+    dw cmd_version
+    dw cmd_echo
+    dw 0
+
+; dispatcher prefix table (4-byte entries: {cmd_string, handler_addr})
+prefix_cmd_table:
+    dw cmd_echo, handle_command.cmd_echo
+    dw 0
+
+hist_count   dw 0
+hist_nav_idx dw -1
+history_buf  times BUF_MAX * 8 db 0
 
 cur_row     dw 0
 cur_col     dw 0
