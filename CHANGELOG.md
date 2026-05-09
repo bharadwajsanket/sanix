@@ -4,6 +4,35 @@ All notable changes to this project will be documented here.
 
 ---
 
+## [v0.7] - 2026-05-09
+
+### Added
+- **Inline cursor movement** — LEFT/RIGHT arrows move cursor within typed input; boundaries enforced at both ends.
+- **Inline character insertion** — typing in the middle shifts the buffer right (backward `rep movsb`) and redraws the tail.
+- **Delete key** — removes character *under* cursor, shifts buffer left, redraws tail without stale characters.
+- **`redraw_tail`** — unified direct VGA write helper used by insert, delete, backspace; repositions hardware cursor after every edit.
+- **`clear_input_line2`** — blanks the entire input area in one VGA `rep stosw` pass; replaces cursor_back loop.
+- **Ctrl+L** — clears screen, reprints prompt + current buffer, repositions cursor to `inp_pos`.
+- **`inp_pos` / `line_row` / `line_col`** — new memory variables tracking cursor offset and input field screen origin.
+- **`check_scroll` adjusts `line_row`** — if scroll fires during output, `line_row` is decremented to stay accurate.
+
+### Changed
+- `read_line` fully restructured around `inp_pos`; BX still = `buf_len`.
+- `load_history` rewritten to use `clear_input_line2` and set `inp_pos = buf_len`.
+- History UP/DOWN now leaves cursor at end of restored line (correct for further editing).
+- TAB autocomplete uses `clear_input_line2`; `inp_pos` set to completed command length.
+- `vga_putchar_attr` no longer calls `sync_cursor` inline (removed redundancy; `redraw_tail` positions at end).
+- Banner, version strings, and `msg_help` bumped to v0.7.
+- `boot.asm` sector count raised to **5** (stage2.bin now ~2410 bytes).
+
+### Notes
+- Input line is guaranteed ≤ 63 chars + prompt = ≤ 65 cols — no line wrapping needed.
+- All `std` + `rep movsb` blocks immediately followed by `cld` (DF invariant preserved).
+- `sync_cursor` saves/restores ES and calls `cld` after `int 0x10` (INT 10h corruption prevented).
+
+---
+
+
 ## [v0.6] - 2026-05-07
 
 ### Added

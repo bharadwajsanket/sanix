@@ -40,7 +40,7 @@ chmod +x run.sh
 QEMU opens a window. You see:
 
 ```
-sanix v0.6  --  type help
+sanix v0.7  --  type help
 > 
 ```
 
@@ -64,8 +64,12 @@ Type commands. The shell responds.
 | anything else | `?` |
 
 **Special Keys:**
-- `UP / DOWN Arrow`: Browse command history (ignores empty commands).
-- `TAB`: Autocomplete command prefix if unique.
+- `UP / DOWN Arrow`: Browse command history (ignores empty and duplicate commands).
+- `LEFT / RIGHT Arrow`: Move cursor within current input line.
+- `TAB`: Autocomplete command prefix if unique match found.
+- `Delete`: Remove character under the cursor.
+- `Backspace`: Remove character before the cursor.
+- `Ctrl+L`: Clear screen and redraw current input.
 
 Leading and trailing spaces are stripped before matching — `  hi  ` works.
 
@@ -79,7 +83,7 @@ The BIOS loads the first sector of the floppy into physical address `0x7C00`
 and jumps to it. Stage 1 has one job: load Stage 2 and hand off execution.
 
 - Initialises `DS`, `ES`, `SS`, `SP`
-- Calls INT 13h (CHS read) to load **4 sectors** from floppy sector 2 into `0x0000:0x7E00`
+- Calls INT 13h (CHS read) to load **5 sectors** from floppy sector 2 into `0x0000:0x7E00`
 - Far jumps to `0x0000:0x7E00`
 - Ends with the boot signature `0xAA55` at bytes 510–511
 
@@ -97,11 +101,17 @@ Stage 2 is the actual shell. It runs entirely in real mode with `DS = 0x0000`.
 print_prompt → read_line → handle_command → repeat
 ```
 
-**Keyboard input:**
+**Keyboard input (v0.7 inline editing):**
 - Reads keys via INT 16h (`xor ah, ah / int 0x16`)
 - `cld` called after every INT 16h — BIOS can corrupt the direction flag
-- Characters stored in a 64-byte input buffer using `stosb` (`ES:DI`)
-- Backspace decrements the buffer pointer and blanks the VGA cell
+- Characters inserted into buffer at `inp_pos` (cursor offset), not just appended
+- Shift-right (backward `rep movsb`) makes room for inserted characters
+- Shift-left (forward `rep movsb`) closes gaps on backspace/delete
+- `inp_pos` tracks cursor; `buf_len` (BX) tracks total length independently
+- LEFT/RIGHT update `inp_pos` and reposition hardware cursor only (no redraw)
+- DELETE removes char under cursor; BACKSPACE removes char before cursor
+- `redraw_tail` redraws buffer from cursor position to end via direct VGA write
+- `Ctrl+L` clears screen, reprints prompt and current buffer, repositions cursor
 
 **Command dispatch:**
 - Parser refactored to use data tables (`exact_cmd_table`, `prefix_cmd_table`) for clean, loop-based dispatch
@@ -157,7 +167,7 @@ brew install nasm qemu
 |---|---|
 | Boot signature | `0xAA55` at bytes 510–511 of sector 0 |
 | Stage 2 load address | `0x0000:0x7E00` via INT 13h CHS (cyl 0, head 0, sector 2) |
-| Sectors loaded | **4** (covers ~1943-byte v0.6 stage2.bin with history + tables) |
+| Sectors loaded | **5** (covers ~2410-byte v0.7 stage2.bin with editing engine) |
 | VGA buffer base | `0xB8000` (text mode, 80×25) |
 | VGA cell format | `[char byte][attr byte]` — `0x07` = white on black, `0x0a` = green |
 | Execution mode | 16-bit real mode throughout |
@@ -233,6 +243,7 @@ v0.3  screen scroll, full terminal behaviour, all bugs fixed
 v0.4  echo command, strcmp_prefix helper, version bump
 v0.5  leading/trailing trim, reboot, halt, about commands
 v0.6  history, autocomplete, hardware cursor, cls, version, parser tables
+v0.7  inline editing, left/right cursor, insert, delete, Ctrl+L
 ```
 
 ---
