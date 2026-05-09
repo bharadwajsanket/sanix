@@ -399,58 +399,64 @@ read_line:
 ; All other regs saved
 ; ─────────────────────────────────────────────
 insert_char:
-    push ax
+    push ax                         ; [sp+10] = saved ax (AL = char to insert)
     push si
     push di
     push cx
     push es
     push ds
 
-    mov ah, al                      ; save char
+    mov ah, al                      ; save char in AH (AL free for ds setup)
 
-    ; shift input_buf[inp_pos..buf_len] right by 1 (backward copy)
+    ; shift input_buf[inp_pos..buf_len] right by 1 (backward)
     mov cx, bx
-    sub cx, [inp_pos]               ; number of chars to shift
-    inc cx                          ; include null terminator
-
+    sub cx, [inp_pos]
+    inc cx                          ; include null
     mov si, input_buf
-    add si, bx                      ; si = &input_buf[buf_len] (null)
+    add si, bx                      ; si = &buf[buf_len] (null byte)
     mov di, si
-    inc di                          ; di = &input_buf[buf_len+1]
-
+    inc di                          ; di = &buf[buf_len+1]
     mov ax, ds
     mov es, ax
     std
     rep movsb
     cld
 
-    ; write the new character
-    mov al, ah
-    mov si, input_buf
-    add si, [inp_pos]
-    mov [si], al
-
+    mov al, ah                      ; restore char to AL
     pop ds
     pop es
 
-    inc bx                          ; buf_len++
-    inc word [inp_pos]              ; cursor advances right
+    ; write char into buffer at inp_pos
+    push si
+    mov si, input_buf
+    add si, [inp_pos]
+    mov [si], al
+    pop si
 
+    inc bx                          ; buf_len++
     pop cx
     pop di
+
+    ; render char using print_char — same VGA path as banner/prompt (proven working)
+    ; cur_col is at line_col+inp_pos maintained by movement handlers
+    call print_char                 ; AL = char; writes at cur_col, increments cur_col
+
+    inc word [inp_pos]              ; cursor moves right past inserted char
+
+    ; if in middle of line, redraw shifted tail after cursor
+    mov ax, [inp_pos]
+    cmp ax, bx
+    jge .at_end
+    call redraw_tail                ; redraws inp_pos..end, blanks residue, syncs cursor
+    jmp .done
+.at_end:
+    ; cursor already advanced by print_char (cur_col = line_col+inp_pos) — just sync
+    ; (print_char called sync_cursor internally via vga_putchar_attr)
+.done:
     pop si
     pop ax
-
-    ; reposition cursor to (line_row, line_col + inp_pos) and redraw right portion
-    mov ax, [line_col]
-    add ax, [inp_pos]
-    dec ax                          ; back one: where new char was inserted
-    mov [cur_col], ax
-    mov ax, [line_row]
-    mov [cur_row], ax
-    call sync_cursor
-    call redraw_tail
     ret
+
 
 ; ─────────────────────────────────────────────
 ; REDRAW_TAIL
